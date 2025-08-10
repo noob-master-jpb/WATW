@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # Main WATW application
+  watw-app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - FLASK_ENV=production
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json
+      - ./logs:/app/logs
+      - ./audit:/app/audit
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+
+  # n8n workflow automation
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AUDIT_SHEET_ID=${AUDIT_SHEET_ID}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflow.json:/home/node/.n8n/workflows/watw-workflow.json:ro
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  # PostgreSQL database for n8n
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=${N8N_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - watw-app
+      - n8n
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
+  postgres_data:
+  redis_data:
